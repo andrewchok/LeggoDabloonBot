@@ -18,6 +18,7 @@ intents = discord.Intents(
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
 GUILD = os.getenv('DISCORD_GUILD')
+DEVELOPER = os.getenv('DEV_ID')
 
 bot = commands.Bot(command_prefix='!', intents=intents)
 
@@ -29,8 +30,9 @@ async def on_ready():
         f'[{guild.name}(id: {guild.id})]'
     )
 
-@bot.command(name='99')
-async def nine_nine(context):
+@bot.command(name='99', help='Responds with a random quote from Brooklyn 99')
+@commands.has_role('botadmin')
+async def nine_nine(ctx):
     brooklyn_99_quotes = [
         'I\'m the human form of the 💯 emoji.',
         'Bingpot!',
@@ -41,16 +43,23 @@ async def nine_nine(context):
     ]
 
     response = random.choice(brooklyn_99_quotes)
-    await context.send(response)
+    await ctx.send(response)
 
-# handle events
+@bot.command(name='roll', help='Simulates rolling dice: <number_of_dice> <number_of_sides>')
+@commands.has_role('admin')
+async def roll(ctx, number_of_dice: int, number_of_sides: int):
+    dice = [
+        str(random.choice(range(1, number_of_sides + 1)))
+        for _ in range(number_of_dice)
+    ]
+    await ctx.send(', '.join(dice))
+
+# handle error for events
 @bot.event
-async def on_error(event, *args, **kwargs):
-    with open('err.log', 'a') as f:
-        if event == 'on_message':
-            f.write(f'Unhandled message: {args[0]}\n')
-        else:
-            raise
+async def on_command_error(ctx, error):
+    if isinstance(error, commands.errors.CheckFailure):
+        await ctx.send('You do not have the correct role for this command.')
+
 
 # connect client to discord
 bot.run(TOKEN)
