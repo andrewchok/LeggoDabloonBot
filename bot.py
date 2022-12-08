@@ -21,6 +21,12 @@ load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
 GUILD = os.getenv('DISCORD_GUILD')
 DEVELOPER = os.getenv('DEV_ID')
+CMD_PREFIX = os.getenv('CMD_PREFIX')
+
+#%% Utility Logic
+def FormatTimeToString(delta_time : datetime.timedelta):
+    return str(int((delta_time.seconds % 3600) / 60)) + ' mins ' + str(delta_time.seconds % 60) + ' secs'
+
 
 #%% Class Logic
 class Item:
@@ -49,7 +55,7 @@ class Item:
 
 class Store:
     # Variables
-    closing_time = datetime.datetime.now() + datetime.timedelta(hours=2)
+    closing_time = datetime.datetime.now() + datetime.timedelta(minutes=2)
 
     # Constructor
     def __init__(self):
@@ -76,7 +82,7 @@ class Store:
 #%% Bot Logic
 temp_store = Store()
 
-bot = commands.Bot(command_prefix='!', intents=intents)
+bot = commands.Bot(command_prefix=CMD_PREFIX, intents=intents)
 
 @bot.event
 async def on_ready():
@@ -101,7 +107,7 @@ async def buy_item(ctx: Context, item_id: int):
 @commands.has_role('botadmin')
 async def show_store(ctx: Context):
     global temp_store
-    await ctx.send('Store closes in ' + str(temp_store.TimeUntilClosing()))
+    await ctx.send('Store closes in ' + FormatTimeToString(temp_store.TimeUntilClosing()))
     print(
         f'{datetime.datetime.now()}:: show_store command triggerd {ctx.author}'
     )
@@ -111,7 +117,11 @@ async def on_message(message):
     if message.author == bot.user:
         return
 
-    encounter_chance = random.randint(0,1)
+    if message.content.startswith(CMD_PREFIX):
+        await bot.process_commands(message)
+        return
+
+    encounter_chance = random.randint(1,1)
 
     if(encounter_chance):
         await message.channel.send('<:smilingcat:941188757376340029>: Hello Traveler! This is Dabloon Cat please take these `4` dabloons.')
@@ -119,6 +129,8 @@ async def on_message(message):
         print(
             f'{datetime.datetime.now()}:: {message.author} tiggered a dabloon gift event'
         )
+    
+
 # handle error for events
 @bot.event
 async def on_command_error(ctx, error):
