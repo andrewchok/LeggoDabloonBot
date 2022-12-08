@@ -4,6 +4,7 @@
 import os
 import random
 import discord
+from discord.ext import commands
 from dotenv import load_dotenv
 
 # declaring intents
@@ -18,21 +19,18 @@ load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
 GUILD = os.getenv('DISCORD_GUILD')
 
-client = discord.Client(intents=intents)
+bot = commands.Bot(command_prefix='!', intents=intents)
 
-@client.event
+@bot.event
 async def on_ready():
-    guild = discord.utils.find(lambda g: g.name == GUILD, client.guilds)
+    guild = discord.utils.get(bot.guilds, name=GUILD)
     print(
-        f'{client.user} is connected to the following guild:\n'
+        f'{bot.user.name} is connected to the following guild:\n'
         f'[{guild.name}(id: {guild.id})]'
     )
 
-@client.event
-async def on_message(message):
-    if message.author == client.user:
-        return
-
+@bot.command(name='99')
+async def nine_nine(context):
     brooklyn_99_quotes = [
         'I\'m the human form of the 💯 emoji.',
         'Bingpot!',
@@ -42,12 +40,18 @@ async def on_message(message):
         ),
     ]
 
-    if message.content == '99!':
-        response = random.choice(brooklyn_99_quotes)
-        await message.channel.send(response)
-    elif message.content == 'raise-exception':
-        raise discord.DiscordException
+    response = random.choice(brooklyn_99_quotes)
+    await context.send(response)
+
+# handle events
+@bot.event
+async def on_error(event, *args, **kwargs):
+    with open('err.log', 'a') as f:
+        if event == 'on_message':
+            f.write(f'Unhandled message: {args[0]}\n')
+        else:
+            raise
 
 # connect client to discord
-client.run(TOKEN)
+bot.run(TOKEN)
 
