@@ -262,7 +262,7 @@ async def on_message(message):
 
         if(encounter_chance == 1):        
             user_exist = Database.record("SELECT 1 FROM user WHERE id = {}".format(message.author.id))
-            cat_emoji = '<:smilingcat:941188757376340029>'
+            cat_emoji = '<:dablooncatboon:1050790287699611768>'
             if(user_exist):
                 dabloon_amount = random.randint(1,5)
                 await message.channel.send('''
