@@ -202,7 +202,7 @@ class Store:
 
 #%% Bot Logic
 temp_store = Store()
-encounter_reset_time = datetime.timedelta(minutes=30)
+encounter_reset_time = datetime.timedelta(minutes=40)
 
 bot = Bot(command_prefix=CMD_PREFIX, intents=intents)
 
@@ -259,7 +259,7 @@ async def on_message(message):
         return
 
     currentTime = datetime.datetime.now()
-    encounter_chance = random.randint(1,10)
+    encounter_chance = random.randint(1,15)
 
     if(encounter_chance == 1):        
         user_exist = Database.record("SELECT 1 FROM user WHERE id = {}".format(message.author.id))
@@ -270,7 +270,7 @@ async def on_message(message):
                 "%Y-%m-%d %H:%M:%S.%f"
             )
             if user_encounter_cooldown < currentTime:
-                dabloon_amount = random.randint(1,5)
+                dabloon_amount = random.randint(1,10)
                 await message.channel.send('''
                     {}: Hello again Traveler {}!\n{}: Safe travels please take these `{}` dabloons.
                     '''.format(cat_emoji, MentionAuthor(message.author), cat_emoji, dabloon_amount)
