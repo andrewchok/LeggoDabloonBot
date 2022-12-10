@@ -5,6 +5,7 @@ import os
 import random
 import datetime
 import discord
+from discord import Message
 from discord.ext import commands
 from discord.ext.commands import Context, Bot
 from dotenv import load_dotenv
@@ -201,7 +202,6 @@ class Store:
 
 #%% Bot Logic
 temp_store = Store()
-encounter_cooldown = datetime.datetime.now()
 encounter_reset_time = datetime.timedelta(minutes=30)
 
 bot = Bot(command_prefix=CMD_PREFIX, intents=intents)
@@ -241,11 +241,15 @@ async def show_inventory(ctx: Context):
         dabloons = 0
     await ctx.send(MentionAuthor(ctx.author) + ' you have `{}` dabloons'.format(dabloons))
     print(
-        f'{datetime.datetime.now()}:: show_store command triggerd {ctx.author}'
+        f'{datetime.datetime.now()}:: show_inventory command triggerd {ctx.author}'
     )
 
 @bot.event
 async def on_message(message):
+    # Enable when Debugging
+    # if discord.utils.get(message.author.roles, name="botadmin") is None:
+    #     return
+
     if message.author == bot.user:
         return
 
@@ -255,40 +259,45 @@ async def on_message(message):
         return
 
     currentTime = datetime.datetime.now()
-    global encounter_cooldown
+    encounter_chance = random.randint(1,10)
 
-    if currentTime >= encounter_cooldown:
-        encounter_chance = random.randint(1,100)
-
-        if(encounter_chance == 1):        
-            user_exist = Database.record("SELECT 1 FROM user WHERE id = {}".format(message.author.id))
-            cat_emoji = '<:dablooncatboon:1050790287699611768>'
-            if(user_exist):
+    if(encounter_chance == 1):        
+        user_exist = Database.record("SELECT 1 FROM user WHERE id = {}".format(message.author.id))
+        cat_emoji = '<:dablooncatboon:1050790287699611768>'
+        if(user_exist):
+            user_encounter_cooldown = datetime.datetime.strptime(
+                Database.field("SELECT encounter_cooldown FROM user WHERE id = {}".format(message.author.id)),
+                "%Y-%m-%d %H:%M:%S.%f"
+            )
+            if user_encounter_cooldown < currentTime:
                 dabloon_amount = random.randint(1,5)
                 await message.channel.send('''
                     {}: Hello again Traveler {}!\n{}: Safe travels please take these `{}` dabloons.
                     '''.format(cat_emoji, MentionAuthor(message.author), cat_emoji, dabloon_amount)
                     )
-                Database.execute("UPDATE user SET dabloons = dabloons + {} WHERE id = {}".format(dabloon_amount, message.author.id))
+                Database.execute("UPDATE user SET dabloons = dabloons + {}, encounter_cooldown = \"{}\" WHERE id = {}".format(dabloon_amount, str(datetime.datetime.now() + encounter_reset_time), message.author.id))
+                print(
+                    f'{datetime.datetime.now()}:: {message.author} tiggered a dabloon gift event'
+                )
             else:
-                dabloon_amount = 4
-                await message.channel.send('''
-                    {}: Hello Traveler{}!\n{}: You have met Dabloon Cat please take these `{}` dabloons.
-                    '''.format(cat_emoji, MentionAuthor(message.author), cat_emoji, dabloon_amount)
-                    )
-                Database.execute("INSERT INTO user (id, name, dabloons) VALUES ({}, \"{}\", {})".format(message.author.id, message.author, dabloon_amount))
+                print(
+                        f'{datetime.datetime.now()}:: {message.author} encounter on cooldown - {FormatTimeToString(user_encounter_cooldown-currentTime)}'
+                )
+        else:
+            dabloon_amount = 4
+            await message.channel.send('''
+                {}: Hello Traveler{}!\n{}: You have met Dabloon Cat please take these `{}` dabloons.
+                '''.format(cat_emoji, MentionAuthor(message.author), cat_emoji, dabloon_amount)
+                )
+            Database.execute("INSERT INTO user (id, name, dabloons, encounter_cooldown) VALUES ({}, \"{}\", {}, \"{}\")".format(message.author.id, message.author, dabloon_amount, str(datetime.datetime.now() + encounter_reset_time)))
             print(
                 f'{datetime.datetime.now()}:: {message.author} tiggered a dabloon gift event'
             )
-            encounter_cooldown = datetime.datetime.now() + encounter_reset_time
-    #     else:
-    #         print(
-    #             f'{datetime.datetime.now()}:: encounter failed the roll'
-    #         )
-    # else:
-    #     print(
-    #             f'{datetime.datetime.now()}:: encounter on cooldown - {FormatTimeToString(encounter_cooldown-currentTime)}'
-    #         )
+    else:
+        print(
+            f'{datetime.datetime.now()}:: {message.author}  encounter failed the roll with {encounter_chance}'
+        )
+    
 
 # handle error for events
 @bot.event
