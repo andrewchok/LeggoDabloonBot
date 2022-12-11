@@ -12,6 +12,8 @@ from dotenv import load_dotenv
 from getpass import getpass
 from mysql.connector import connect, Error
 import aiomysql
+import requests
+import json
 
 #%% declaring intents
 intents = discord.Intents(
@@ -28,14 +30,33 @@ DEVELOPER = os.getenv('DEV_ID')
 CMD_PREFIX = os.getenv('CMD_PREFIX')
 MYSQL_USERNAME = os.getenv('MYSQL_USERNAME')
 MYSQL_PASSWORD = os.getenv('MYSQL_PASSWORD')
+SHOP_ID = os.getenv('SHOP_ID')
+UNOWNED_ID = os.getenv('UNOWNED_ID')
+TO_DELETE_ID = os.getenv('TO_DELETE_ID')
+RANDOM_WORD_URL = os.getenv('RANDOM_WORD_URL')
 
 #%% Utility Logic
 def FormatTimeToString(delta_time : datetime.timedelta):
-    return str(int((delta_time.seconds % 3600) / 60)) + ' mins ' + str(delta_time.seconds % 60) + ' secs'
+    time_message = ""
+    if int(delta_time.seconds / 3600):
+        time_message += str(int(delta_time.seconds / 3600)) + ' hrs '
+    if int((delta_time.seconds % 3600) / 60):
+        time_message += str(int((delta_time.seconds % 3600) / 60)) + ' mins '
+    if delta_time.seconds % 60:
+        time_message += str(delta_time.seconds % 60) + ' secs'
+    return time_message
 
 def MentionAuthor(author):
     authorId = str(author.id)
     return '<@' + authorId + '>'
+
+def IsShopOpen():
+    global shop_time
+    return shop_time > datetime.datetime.now()
+
+def get_words(num):
+    response=requests.get(RANDOM_WORD_URL+str(num)).text
+    return json.loads(response)
 
 #%% MySQL Logic
 class Database:
@@ -201,8 +222,11 @@ class Store:
 
 
 #%% Bot Logic
-temp_store = Store()
 encounter_reset_time = datetime.timedelta(minutes=40)
+shop_open_duration = datetime.timedelta(hours=6)
+shop_time = datetime.datetime.strptime(Database.field("SELECT encounter_cooldown FROM user WHERE id = {}".format(SHOP_ID)), "%Y-%m-%d %H:%M:%S.%f")
+doon_cat_emoji = '<:dablooncatboon:1050790287699611768>'
+shop_cat_emoji = '<:storecat:1050792540158312489>'
 
 bot = Bot(command_prefix=CMD_PREFIX, intents=intents)
 
@@ -214,22 +238,73 @@ async def on_ready():
         f'[{guild.name}(id: {guild.id})]'
     )
 
+@bot.command(name='test', help='')
+@commands.has_role('botadmin')
+async def test_stuff(ctx: Context):
+    words = get_words(6)
+    for word in words:
+        print(word)
+    print(
+            f'{datetime.datetime.now()}:: test_stuff command triggered {ctx.author}'
+        )
+
 @bot.command(name='buy', help='')
 @commands.has_role('botadmin')
 async def buy_item(ctx: Context, item_id: int):
-    global temp_store
-    temp_store.Buy(item_id, ctx.author.id)
+    global shop_cat_emoji
 
-    await ctx.send("buying item " + str(item_id))
+    if not IsShopOpen():
+        print(
+            f'{datetime.datetime.now()}:: buy_item command triggered {ctx.author} :: Store not open'
+        )
+
+    user_recently_bought = Database.record("SELECT 1 FROM recent_shoppers WHERE user_id = {}".format(ctx.author.id))
+    if(user_recently_bought):        
+        await ctx.send('''
+                    {}: Hey! You have already bought an item {}!\n{}: One per customer!
+                    '''.format(shop_cat_emoji, MentionAuthor(ctx.author), shop_cat_emoji)
+                    )
+    else:
+        await ctx.send("bought item " + str(item_id))
     print(
         f'{datetime.datetime.now()}:: buy_item command triggered {ctx.author}'
     )
 
-@bot.command(name='store', help='')
+@bot.command(name='sell', help='')
 @commands.has_role('botadmin')
-async def show_store(ctx: Context):
-    global temp_store
-    await ctx.send('Store closes in ' + FormatTimeToString(temp_store.TimeUntilClosing()))
+async def sell_item(ctx: Context, item_id: int):
+
+    await ctx.send("sold item " + str(item_id))
+    print(
+        f'{datetime.datetime.now()}:: buy_item command triggered {ctx.author}'
+    )
+
+@bot.command(name='shop', help='')
+@commands.has_role('botadmin')
+async def show_store(ctx: Context):  
+    global shop_time
+    global shop_cat_emoji
+    current_time = datetime.datetime.now()
+
+    if IsShopOpen():
+        shop_items = Database.records("SELECT name, price, id FROM item WHERE id IN (SELECT item_id FROM ownership WHERE user_id = {})".format(SHOP_ID))
+        shop_cat_message = "{}: Welcome! I have wares if you have dabloons:\n".format(shop_cat_emoji)
+        for item in shop_items:
+            print(f'{item}')
+            shop_cat_message += "    **{}** dabloons : **{}**  `id[{}]`\n".format(item[1], item[0], item[2])
+        print(f'first item name {shop_items[0][0]} : {shop_items[0][1]}')
+    else:
+        await ctx.send('{}: Store not open!'.format(shop_cat_emoji))
+        return
+
+    # if shop is closed, then reopen it
+    if shop_time < current_time and False:
+        shop_time = datetime.datetime.now() + shop_open_duration
+        Database.execute("UPDATE user SET encounter_cooldown = \"{}\" WHERE id = 1".format(str(shop_time)))
+
+    shop_cat_message += '\nShop closes in `{}`'.format(FormatTimeToString(shop_time - datetime.datetime.now()))
+    await ctx.send(shop_cat_message)
+
     print(
         f'{datetime.datetime.now()}:: show_store command triggerd {ctx.author}'
     )
@@ -263,7 +338,7 @@ async def on_message(message):
 
     if(encounter_chance == 1):        
         user_exist = Database.record("SELECT 1 FROM user WHERE id = {}".format(message.author.id))
-        cat_emoji = '<:dablooncatboon:1050790287699611768>'
+        global doon_cat_emoji
         if(user_exist):
             user_encounter_cooldown = datetime.datetime.strptime(
                 Database.field("SELECT encounter_cooldown FROM user WHERE id = {}".format(message.author.id)),
@@ -273,7 +348,7 @@ async def on_message(message):
                 dabloon_amount = random.randint(1,10)
                 await message.channel.send('''
                     {}: Hello again Traveler {}!\n{}: Safe travels please take these `{}` dabloons.
-                    '''.format(cat_emoji, MentionAuthor(message.author), cat_emoji, dabloon_amount)
+                    '''.format(doon_cat_emoji, MentionAuthor(message.author), doon_cat_emoji, dabloon_amount)
                     )
                 Database.execute("UPDATE user SET dabloons = dabloons + {}, encounter_cooldown = \"{}\" WHERE id = {}".format(dabloon_amount, str(datetime.datetime.now() + encounter_reset_time), message.author.id))
                 print(
@@ -287,7 +362,7 @@ async def on_message(message):
             dabloon_amount = 4
             await message.channel.send('''
                 {}: Hello Traveler{}!\n{}: You have met Dabloon Cat please take these `{}` dabloons.
-                '''.format(cat_emoji, MentionAuthor(message.author), cat_emoji, dabloon_amount)
+                '''.format(doon_cat_emoji, MentionAuthor(message.author), doon_cat_emoji, dabloon_amount)
                 )
             Database.execute("INSERT INTO user (id, name, dabloons, encounter_cooldown) VALUES ({}, \"{}\", {}, \"{}\")".format(message.author.id, message.author, dabloon_amount, str(datetime.datetime.now() + encounter_reset_time)))
             print(
@@ -309,3 +384,5 @@ async def on_command_error(ctx, error):
 # connect client to discord
 bot.run(TOKEN)
 
+
+# %%
