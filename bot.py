@@ -15,6 +15,7 @@ import aiomysql
 import requests
 import json
 from enum import Enum
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 #%% declaring intents
 intents = discord.Intents(
@@ -70,6 +71,8 @@ def GetRandomWords(num):
 #%% MySQL Logic
 class Database:
     tax = 5
+    lowest_rate = 1
+    highest_rate = 9
 
     def field(command, *values):
         try:
@@ -176,9 +179,9 @@ class Database:
                     item_records.append((
                         name, 
                         general_price, 
-                        str(datetime.timedelta(minutes=(random.randint(30,90)))),
+                        str(datetime.timedelta(minutes=(random.randint(15,45)))),
                         StockType.AGGRO.value,
-                        random.randint(general_price - Database.tax, general_price * 2)
+                        random.randint(general_price, general_price * 2)
                         ))
 
                 with connection.cursor() as cursor:
@@ -194,6 +197,47 @@ class Database:
                     cursor.execute("UPDATE user SET encounter_cooldown = \"{}\" WHERE id = {}".format(str(shop_time), SHOP_ID))
                     connection.commit()
                     print("Done Populating Shop!")
+                    
+        except Error as e:
+            print("Error:")
+            print(e)
+
+    async def update_stocks():
+        try:
+            with connect(
+                host="localhost",
+                user=MYSQL_USERNAME,
+                password=MYSQL_PASSWORD,
+                database="leggo_dabloons_db"
+            ) as connection:
+                print(f"{datetime.datetime.now()}:: Updating Stocks.................................................")
+                """item (name, price, cooldown, stock_timer, max_price)"""
+                with connection.cursor() as cursor:
+                    cursor.execute("SELECT id, stock_timer, price, max_price FROM item WHERE id IN (SELECT item_id FROM ownership WHERE user_id > 10) AND stock_timer > 0")
+                    items_to_update = cursor.fetchall()
+
+                    for item in items_to_update:
+                        id = item[0]
+                        stock_timer = item[1]
+                        price = item[2]
+                        max_price = item[3]
+
+                        previous_price = price
+                        price = previous_price + ((1 if random.randint(0,1) else -1) * random.randint(Database.lowest_rate,Database.highest_rate))
+
+                        # update stock price, if reaches 0 it becomes dead
+                        if price <= 0:
+                            price = 0
+                            stock_timer = StockType.INVALID.value
+                        elif price > max_price:
+                            price = max_price
+
+                        print("  {} went from [{}] to [{}] .. ~{}".format(id, previous_price, price, max_price))
+
+                        cursor.execute("UPDATE item SET price = {}, stock_timer = {} WHERE id = {}".format(price, stock_timer, id))
+                        connection.commit()
+
+                    print(f"{datetime.datetime.now()}:: Done Updating Stocks!..............................................")
                     
         except Error as e:
             print("Error:")
@@ -226,6 +270,29 @@ class StockType(Enum):
     BALANCED = 2
     SLOW = 3
 
+#%% Scheduler Logic
+Scheduler = AsyncIOScheduler()
+
+def start_scheduled():
+    """Starts scheduled activities in one place."""
+    print('Scheduled tasks...')
+
+    # Scheduler.add_job(scheduled_test_tick, 'interval', minutes=10)
+    # print('>> scheduled_test_tick .. minutes=10')
+
+    Scheduler.add_job(Database.update_stocks, 'interval', minutes=15)
+    print('>> Database.update_stocks .. minutes=15')
+
+    Scheduler.start()
+    print('Scheduled tasks started!')
+    return
+
+async def scheduled_test_tick():
+    print(
+            f'{datetime.datetime.now()}:: scheduled_test_tick..............................................'
+        )
+    return
+
 
 #%% Bot Logic
 encounter_reset_time = datetime.timedelta(minutes=30)
@@ -241,10 +308,11 @@ async def on_ready():
     guild = discord.utils.get(bot.guilds, name=GUILD)
     print(
         f'{bot.user.name} is connected to the following guild:\n'
-        f'[{guild.name}(id: {guild.id})]'
+        f'[{guild.name}(id: {guild.id})]'        
     )
+    start_scheduled()
 
-@bot.command(name='buy', help='')
+@bot.command(name='buy', help='<item_id> buys item with that id')
 @commands.has_role('botadmin')
 async def buy_item(ctx: Context, item_id: int):
     global shop_cat_emoji
@@ -262,32 +330,34 @@ async def buy_item(ctx: Context, item_id: int):
                     '''.format(shop_cat_emoji, MentionAuthor(ctx.author), shop_cat_emoji)
                     )
     else:
-        user_dabloons = Database.field("SELECT dabloons FROM user WHERE id = {}".format(ctx.author.id))
-        item_price = Database.field("SELECT price FROM item WHERE id = {}".format(item_id))
-        if user_dabloons >= item_price:
-            user_dabloons -= item_price
-            # update dabloons after purchase
-            Database.execute("UPDATE user SET dabloons = {} WHERE id = {}".format(user_dabloons, ctx.author.id))                
-            # update the ownership of the item
-            Database.execute("UPDATE ownership SET user_id = {} WHERE item_id = (SELECT id FROM item WHERE id = {})".format(ctx.author.id, item_id)) 
-            # update recent shoppers
-            Database.execute("INSERT INTO recent_shoppers (user_id) VALUES ({})".format(ctx.author.id))
-            # update cooldown time from its delta time, and take tax cut
-            item_cooldown = datetime.datetime.strptime(Database.field("SELECT cooldown FROM item WHERE id = {}".format(item_id)), '%H:%M:%S')
-            current_time = datetime.datetime.now()
-            item_cooldown = current_time + datetime.timedelta(hours=item_cooldown.hour, minutes=item_cooldown.minute, seconds=item_cooldown.second)
-            Database.execute("UPDATE item SET cooldown = \"{}\", price = price - {} WHERE id = {}".format(str(item_cooldown), Database.tax, item_id))
-            # check if sold out then close shop            
-            shop_items = Database.records("SELECT name, price, id FROM item WHERE id IN (SELECT item_id FROM ownership WHERE user_id = {})".format(SHOP_ID))
-            if not shop_items:
-                CloseShop()
+        is_in_shop = Database.record("SELECT * FROM ownership WHERE user_id  = {} AND item_id = {}".format(SHOP_ID, item_id))
+        if(is_in_shop):
+            user_dabloons = Database.field("SELECT dabloons FROM user WHERE id = {}".format(ctx.author.id))
+            item_price = Database.field("SELECT price FROM item WHERE id = {}".format(item_id))
+            if user_dabloons >= item_price:
+                user_dabloons -= item_price
+                # update dabloons after purchase
+                Database.execute("UPDATE user SET dabloons = {} WHERE id = {}".format(user_dabloons, ctx.author.id))                
+                # update the ownership of the item
+                Database.execute("UPDATE ownership SET user_id = {} WHERE item_id = (SELECT id FROM item WHERE id = {})".format(ctx.author.id, item_id)) 
+                # update recent shoppers
+                Database.execute("INSERT INTO recent_shoppers (user_id) VALUES ({})".format(ctx.author.id))
+                # update cooldown time from its delta time, and take tax cut
+                item_cooldown = datetime.datetime.strptime(Database.field("SELECT cooldown FROM item WHERE id = {}".format(item_id)), '%H:%M:%S')
+                current_time = datetime.datetime.now()
+                item_cooldown = current_time + datetime.timedelta(hours=item_cooldown.hour, minutes=item_cooldown.minute, seconds=item_cooldown.second)
+                Database.execute("UPDATE item SET cooldown = \"{}\", price = price - {} WHERE id = {}".format(str(item_cooldown), Database.tax, item_id))
+                # check if sold out then close shop            
+                shop_items = Database.records("SELECT name, price, id FROM item WHERE id IN (SELECT item_id FROM ownership WHERE user_id = {})".format(SHOP_ID))
+                if not shop_items:
+                    CloseShop()
 
-        await ctx.send("{}: Thank you for your dabloons {}!\n`bought item {}`".format(MentionAuthor(ctx.author), shop_cat_emoji, item_id))
+            await ctx.send("{}: Thank you for your dabloons {}!\n`bought item {}`".format(shop_cat_emoji, MentionAuthor(ctx.author), item_id))
     print(
         f'{datetime.datetime.now()}:: buy_item command triggered {ctx.author}'
     )
 
-@bot.command(name='sell', help='')
+@bot.command(name='sell', help='<item_id> sell item with that id')
 @commands.has_role('botadmin')
 async def sell_item(ctx: Context, item_id: int):
     is_owner = Database.record("SELECT * FROM ownership WHERE user_id  = {} AND item_id = {}".format(ctx.author.id, item_id))
@@ -310,7 +380,7 @@ async def sell_item(ctx: Context, item_id: int):
         f'{datetime.datetime.now()}:: sell_item command triggered {ctx.author}'
     )
 
-@bot.command(name='shop', help='')
+@bot.command(name='shop', help='open the shop')
 @commands.has_role('botadmin')
 async def show_store(ctx: Context):  
     global shop_time
@@ -339,7 +409,7 @@ async def show_store(ctx: Context):
         f'{datetime.datetime.now()}:: show_store command triggerd {ctx.author}'
     )
 
-@bot.command(name='bag', help='')
+@bot.command(name='bag', help='see your inventory')
 async def show_inventory(ctx: Context):
     current_time = datetime.datetime.now()
     dabloons = Database.field("SELECT dabloons FROM user WHERE id = {}".format(ctx.author.id))
@@ -395,7 +465,7 @@ async def on_message(message):
         )
         if user_encounter_cooldown < currentTime:            
             encounter_chance = random.randint(1,4)
-            if(encounter_chance == 1): 
+            if encounter_chance == 1: 
                 dabloon_amount = random.randint(1,10)
                 await message.channel.send('''
                     {}: Hello again Traveler {}!\n{}: Safe travels please take these `{}` dabloons.
@@ -404,11 +474,25 @@ async def on_message(message):
                 Database.execute("UPDATE user SET dabloons = dabloons + {}, encounter_cooldown = \"{}\" WHERE id = {}".format(dabloon_amount, str(datetime.datetime.now() + encounter_reset_time), message.author.id))
                 print(
                     f'{datetime.datetime.now()}:: {message.author} tiggered a dabloon gift event'
-                )
+                )                
             else:
+                if not IsShopOpen():
+                    shop_encounter_chance = random.randint(1,10)
+                    if shop_encounter_chance == 1:
+                        Database.create_store()
+                        global shop_cat_emoji
+                        await message.channel.send('''
+                            {}: Salutations Traveler {}!\n{}: Shop is now open! `use !shop`
+                            '''.format(shop_cat_emoji, MentionAuthor(message.author), shop_cat_emoji)
+                            )
+                    else:
+                        print(
+                            f'{datetime.datetime.now()}:: {message.author} shop encounter failed the roll with {shop_encounter_chance}'
+                        )
+
                 Database.execute("UPDATE user SET encounter_cooldown = \"{}\" WHERE id = {}".format(str(datetime.datetime.now() + encounter_reset_time), message.author.id))
                 print(
-                    f'{datetime.datetime.now()}:: {message.author}  encounter failed the roll with {encounter_chance} - put on cooldown'
+                    f'{datetime.datetime.now()}:: {message.author} encounter failed the roll with {encounter_chance} - put on cooldown'
                 )
         else:
             print(
@@ -436,9 +520,16 @@ async def on_message(message):
 @bot.command(name='test', help='')
 @commands.has_role('botadmin')
 async def test_stuff(ctx: Context):
-    Database.create_store()
     print(
             f'{datetime.datetime.now()}:: test_stuff command triggered {ctx.author}'
+        )
+
+@bot.command(name='t_open', help='')
+@commands.has_role('botadmin')
+async def test_open_store(ctx: Context):
+    Database.create_store()
+    print(
+            f'{datetime.datetime.now()}:: test_open_store command triggered {ctx.author}'
         )
 
 @bot.command(name='t_close', help='')
@@ -455,7 +546,15 @@ async def test_delete_pending_items(ctx: Context):
     Database.execute("DELETE FROM item WHERE id IN (SELECT item_id FROM ownership WHERE user_id = {})".format(TO_DELETE_ID)) 
     print(
             f'{datetime.datetime.now()}:: test_delete_pending_items command triggered {ctx.author}'
-        )    
+        )  
+
+@bot.command(name='t_delete_unowned', help='')
+@commands.has_role('botadmin')
+async def test_delete_unowned_items(ctx: Context):
+    Database.execute("DELETE FROM item WHERE id IN (SELECT item_id FROM ownership WHERE user_id = {})".format(UNOWNED_ID)) 
+    print(
+            f'{datetime.datetime.now()}:: test_delete_unowned_items command triggered {ctx.author}'
+        )   
 
 # handle error for events
 @bot.event
