@@ -34,6 +34,7 @@ MYSQL_USERNAME = os.getenv('MYSQL_USERNAME')
 MYSQL_PASSWORD = os.getenv('MYSQL_PASSWORD')
 SHOP_ID = os.getenv('SHOP_ID')
 UNOWNED_ID = os.getenv('UNOWNED_ID')
+ROBBER_CAT_ID = os.getenv('ROBBER_CAT_ID')
 TO_DELETE_ID = os.getenv('TO_DELETE_ID')
 RANDOM_WORD_URL = os.getenv('RANDOM_WORD_URL')
 
@@ -64,13 +65,37 @@ def CloseShop():
     Database.execute("DELETE FROM recent_shoppers")
     Database.execute("UPDATE ownership SET user_id = {} WHERE user_id = {}".format(TO_DELETE_ID, SHOP_ID)) 
 
+async def Robbery(ctx: Context):
+    global robber_cat_emoji
+    global encounter_reset_time
+    current_dabloons = Database.field("SELECT dabloons FROM user WHERE id = {}".format(ctx.author.id))
+    robber_dabloons = Database.field("SELECT dabloons FROM user WHERE id = {}".format(ROBBER_CAT_ID))
+    if current_dabloons > 40:
+        stolen_dabloons = random.randint(12,22)
+        await ctx.send(f'''
+            {robber_cat_emoji}: Hands up Traveler {MentionAuthor(ctx.author)}!\n{robber_cat_emoji}: Give me your dabloons!\n  `You lost {stolen_dabloons} dabloons`
+            '''
+            )
+        Database.execute(f"UPDATE user SET dabloons = dabloons - {stolen_dabloons}, encounter_cooldown = \"{str(datetime.datetime.now() + encounter_reset_time)}\" WHERE id = {ctx.author.id}")
+        Database.execute(f"UPDATE user SET dabloons = dabloons + {stolen_dabloons} WHERE id = {ROBBER_CAT_ID}")
+    else:
+        await ctx.send(f'''
+            {robber_cat_emoji}: Hands up Traveler {MentionAuthor(ctx.author)}!\n{robber_cat_emoji}: Give me your dablo..\n{robber_cat_emoji}: omg you have so little.. please take this!\n  `You gained {robber_dabloons} dabloons`
+            '''
+            )
+        Database.execute(f"UPDATE user SET dabloons = dabloons + {robber_dabloons}, encounter_cooldown = \"{str(datetime.datetime.now() + encounter_reset_time)}\" WHERE id = {ctx.author.id}")
+        Database.execute(f"UPDATE user SET dabloons = 30 WHERE id = {ROBBER_CAT_ID}")
+    print(
+        f'{datetime.datetime.now()}:: {ctx.author} tiggered a robbery event'
+    )      
+
 def GetRandomWords(num):
     response=requests.get(RANDOM_WORD_URL+str(num)).text
     return json.loads(response)
 
 #%% MySQL Logic
 class Database:
-    tax = 5
+    tax = 1
     lowest_rate = 1
     highest_rate = 9
 
@@ -159,6 +184,7 @@ class Database:
             )
             return
         
+        CloseShop()
         try:
             with connect(
                 host="localhost",
@@ -181,7 +207,7 @@ class Database:
                         general_price, 
                         str(datetime.timedelta(minutes=(random.randint(15,45)))),
                         StockType.AGGRO.value,
-                        random.randint(general_price, general_price * 2)
+                        random.randint(general_price * 2, general_price * 4)
                         ))
 
                 with connection.cursor() as cursor:
@@ -193,6 +219,7 @@ class Database:
                         print("Attaching ownership of item - {}".format(name))
 
                     global shop_time
+                    global shop_open_duration
                     shop_time = datetime.datetime.now() + shop_open_duration
                     cursor.execute("UPDATE user SET encounter_cooldown = \"{}\" WHERE id = {}".format(str(shop_time), SHOP_ID))
                     connection.commit()
@@ -223,7 +250,7 @@ class Database:
                         max_price = item[3]
 
                         previous_price = price
-                        price = previous_price + ((1 if random.randint(0,1) else -1) * random.randint(Database.lowest_rate,Database.highest_rate))
+                        price = previous_price + ((1 if random.randint(0,2) else -1) * random.randint(Database.lowest_rate,Database.highest_rate))
 
                         # update stock price, if reaches 0 it becomes dead
                         if price <= 0:
@@ -252,9 +279,24 @@ try:
     ) as connection:
         print("Successful MySQL Connection Established!")
         print(connection)
+        # insert_item_query = """
+        #         INSERT INTO user (id, name, dabloons, encounter_cooldown)
+        #         VALUES ( %s, %s, %s, %s )
+        #         """
+        # item_records = [                    
+        #     (                 -1 , "ToDelete"             ,        0 , "NULL"                       ),
+        #     (                  0 , "Unowned"              ,        0 , "NULL"                       ),
+        #     (                  1 , "Store"                ,        0 , "2022-12-12 21:36:59.501683" ),
+        # ]
         with connection.cursor() as cursor:
             # cursor.executemany(insert_item_query, item_records)
             cursor.execute("SELECT * FROM user")
+            for item in cursor.fetchall():
+                print(item)
+            cursor.execute("SELECT * FROM ownership")
+            for item in cursor.fetchall():
+                print(item)
+            cursor.execute("SELECT * FROM item")
             for item in cursor.fetchall():
                 print(item)
             connection.commit()
@@ -300,6 +342,7 @@ shop_open_duration = datetime.timedelta(hours=6)
 shop_time = datetime.datetime.strptime(Database.field("SELECT encounter_cooldown FROM user WHERE id = {}".format(SHOP_ID)), "%Y-%m-%d %H:%M:%S.%f")
 doon_cat_emoji = '<:dablooncatboon:1050790287699611768>'
 shop_cat_emoji = '<:storecat:1050792540158312489>'
+robber_cat_emoji = '<:angryasfukcatwdagger:1052277664200794142>'
 
 bot = Bot(command_prefix=CMD_PREFIX, intents=intents, case_insensitive=True)
 
@@ -313,7 +356,6 @@ async def on_ready():
     start_scheduled()
 
 @bot.command(name='buy', help='<item_id> buys item with that id')
-@commands.has_role('botadmin')
 async def buy_item(ctx: Context, item_id: int):
     global shop_cat_emoji
 
@@ -358,7 +400,6 @@ async def buy_item(ctx: Context, item_id: int):
     )
 
 @bot.command(name='sell', help='<item_id> sell item with that id')
-@commands.has_role('botadmin')
 async def sell_item(ctx: Context, item_id: int):
     is_owner = Database.record("SELECT * FROM ownership WHERE user_id  = {} AND item_id = {}".format(ctx.author.id, item_id))
     if is_owner:
@@ -381,7 +422,6 @@ async def sell_item(ctx: Context, item_id: int):
     )
 
 @bot.command(name='shop', help='open the shop')
-@commands.has_role('botadmin')
 async def show_store(ctx: Context):  
     global shop_time
     global shop_cat_emoji
@@ -458,15 +498,20 @@ async def on_message(message):
            
     user_exist = Database.record("SELECT 1 FROM user WHERE id = {}".format(message.author.id))
     global doon_cat_emoji
+    global encounter_reset_time
     if(user_exist):
         user_encounter_cooldown = datetime.datetime.strptime(
             Database.field("SELECT encounter_cooldown FROM user WHERE id = {}".format(message.author.id)),
             "%Y-%m-%d %H:%M:%S.%f"
         )
-        if user_encounter_cooldown < currentTime:            
-            encounter_chance = random.randint(1,4)
+        if user_encounter_cooldown < currentTime:  
+
+            encounter_chance = random.randint(1,2)
+            shop_encounter_chance = random.randint(1,5)
+            robbery_chance = random.randint(1,10)
+
             if encounter_chance == 1: 
-                dabloon_amount = random.randint(1,10)
+                dabloon_amount = random.randint(3,15)
                 await message.channel.send('''
                     {}: Hello again Traveler {}!\n{}: Safe travels please take these `{}` dabloons.
                     '''.format(doon_cat_emoji, MentionAuthor(message.author), doon_cat_emoji, dabloon_amount)
@@ -475,32 +520,32 @@ async def on_message(message):
                 print(
                     f'{datetime.datetime.now()}:: {message.author} tiggered a dabloon gift event'
                 )                
-            else:
-                if not IsShopOpen():
-                    shop_encounter_chance = random.randint(1,10)
-                    if shop_encounter_chance == 1:
-                        Database.create_store()
-                        global shop_cat_emoji
-                        await message.channel.send('''
-                            {}: Salutations Traveler {}!\n{}: Shop is now open! `use !shop`
-                            '''.format(shop_cat_emoji, MentionAuthor(message.author), shop_cat_emoji)
-                            )
-                    else:
-                        print(
-                            f'{datetime.datetime.now()}:: {message.author} shop encounter failed the roll with {shop_encounter_chance}'
-                        )
-
+            elif not IsShopOpen() and shop_encounter_chance == 1:
+                Database.create_store()
+                global shop_cat_emoji
+                await message.channel.send('''
+                    {}: Salutations Traveler {}!\n{}: Shop is now open! `use !shop`
+                    '''.format(shop_cat_emoji, MentionAuthor(message.author), shop_cat_emoji)
+                    )
                 Database.execute("UPDATE user SET encounter_cooldown = \"{}\" WHERE id = {}".format(str(datetime.datetime.now() + encounter_reset_time), message.author.id))
                 print(
-                    f'{datetime.datetime.now()}:: {message.author} encounter failed the roll with {encounter_chance} - put on cooldown'
+                    f'{datetime.datetime.now()}:: {message.author} triggered a shop event'
                 )
+            elif robbery_chance == 1:
+                ctx = await bot.get_context(message)
+                await Robbery(ctx)
+            else:
+                Database.execute("UPDATE user SET encounter_cooldown = \"{}\" WHERE id = {}".format(str(datetime.datetime.now() + encounter_reset_time), message.author.id))
+                print(
+                    f'{datetime.datetime.now()}:: {message.author} encounter failed the roll with {encounter_chance}, {shop_encounter_chance}, {robbery_chance} - put on cooldown'
+                )                
         else:
             print(
                     f'{datetime.datetime.now()}:: {message.author} encounter on cooldown - {FormatTimeToString(user_encounter_cooldown-currentTime)}'
             )
     # first time gift
     else:
-        encounter_chance = random.randint(1,5)
+        encounter_chance = random.randint(1,4)
         if(encounter_chance == 1): 
             dabloon_amount = 4
             await message.channel.send('''
@@ -520,6 +565,7 @@ async def on_message(message):
 @bot.command(name='test', help='')
 @commands.has_role('botadmin')
 async def test_stuff(ctx: Context):
+    await Robbery(ctx)
     print(
             f'{datetime.datetime.now()}:: test_stuff command triggered {ctx.author}'
         )
