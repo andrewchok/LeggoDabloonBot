@@ -67,20 +67,26 @@ def CloseShop():
 
 async def Robbery(ctx: Context):
     global robber_cat_emoji
+    rob_emoji = robber_cat_emoji
     global encounter_reset_time
     current_dabloons = Database.field("SELECT dabloons FROM user WHERE id = {}".format(ctx.author.id))
     robber_dabloons = Database.field("SELECT dabloons FROM user WHERE id = {}".format(ROBBER_CAT_ID))
-    if current_dabloons > 40:
-        stolen_dabloons = random.randint(12,22)
+    if current_dabloons > 100:
+        stolen_dabloons = random.randint(18,32)
+        bandit_group_chance = random.randint(1,4)
+        if current_dabloons > 400 and bandit_group_chance == 1:
+            stolen_dabloons = random.randint(51,113)
+            rob_emoji += robber_cat_emoji + robber_cat_emoji
+
         await ctx.send(f'''
-            {robber_cat_emoji}: Hands up Traveler {MentionAuthor(ctx.author)}!\n{robber_cat_emoji}: Give me your dabloons!\n  `You lost {stolen_dabloons} dabloons`
+            {rob_emoji}: Hands up Traveler {MentionAuthor(ctx.author)}!\n{rob_emoji}: Give me your dabloons!\n  `You lost {stolen_dabloons} dabloons`
             '''
             )
         Database.execute(f"UPDATE user SET dabloons = dabloons - {stolen_dabloons}, encounter_cooldown = \"{str(datetime.datetime.now() + encounter_reset_time)}\" WHERE id = {ctx.author.id}")
         Database.execute(f"UPDATE user SET dabloons = dabloons + {stolen_dabloons} WHERE id = {ROBBER_CAT_ID}")
     else:
         await ctx.send(f'''
-            {robber_cat_emoji}: Hands up Traveler {MentionAuthor(ctx.author)}!\n{robber_cat_emoji}: Give me your dablo..\n{robber_cat_emoji}: omg you have so little.. please take this!\n  `You gained {robber_dabloons} dabloons`
+            {rob_emoji}: Hands up Traveler {MentionAuthor(ctx.author)}!\n{rob_emoji}: Give me your dablo..\n{rob_emoji}: omg you have so little.. please take this!\n  `You gained {robber_dabloons} dabloons`
             '''
             )
         Database.execute(f"UPDATE user SET dabloons = dabloons + {robber_dabloons}, encounter_cooldown = \"{str(datetime.datetime.now() + encounter_reset_time)}\" WHERE id = {ctx.author.id}")
@@ -88,6 +94,51 @@ async def Robbery(ctx: Context):
     print(
         f'{datetime.datetime.now()}:: {ctx.author} tiggered a robbery event'
     )      
+
+def ShowGoodBoi(ctx: Context):
+    global dog_emoji
+    has_good_boi = Database.field("SELECT * FROM ownership WHERE user_id = {} AND item_id = -1".format(ctx.author.id))
+    if has_good_boi:
+        return " " + dog_emoji
+    return ""
+
+def ShowGoodGoil(ctx: Context):
+    global dog2_emoji
+    has_good_goil = Database.field("SELECT * FROM ownership WHERE user_id = {} AND item_id = -2".format(ctx.author.id))
+    if has_good_goil:
+        return " " + dog2_emoji
+    return ""
+
+async def FoundDoggo(ctx: Context):
+    global dog_emoji
+    global dog2_emoji
+    global encounter_reset_time
+    doggos = Database.records("SELECT item_id, user_id FROM ownership WHERE item_id < 0 and user_id = {}".format(ctx.author.id))
+    
+    if len(doggos) < 2:
+        doggo_to_meet = random.randint(-2,-1)
+        doggo_name = Database.field("SELECT name FROM item WHERE id = {}".format(doggo_to_meet))
+        has_doggo = False
+        for doggo in doggos:
+            if doggo[0] == doggo_to_meet:
+                has_doggo = True
+        if has_doggo:
+            print(
+                f'{datetime.datetime.now()}:: {ctx.author} has current doggo!'
+            ) 
+        else:
+            await ctx.send(f'''
+                {dog_emoji if doggo_to_meet == -1 else dog2_emoji}: Hewwo Twaveler {MentionAuthor(ctx.author)}! Woof Woof!\n `You found {doggo_name}`
+                '''
+                )
+            Database.execute(f"UPDATE ownership SET user_id = {ctx.author.id} WHERE item_id = {doggo_to_meet}")
+    else:
+        print(
+            f'{datetime.datetime.now()}:: {ctx.author} has both doggos!'
+        ) 
+    print(
+        f'{datetime.datetime.now()}:: {ctx.author} tiggered a FoundDoggo event'
+    ) 
 
 def GetRandomWords(num):
     response=requests.get(RANDOM_WORD_URL+str(num)).text
@@ -343,6 +394,8 @@ shop_time = datetime.datetime.strptime(Database.field("SELECT encounter_cooldown
 doon_cat_emoji = '<:dablooncatboon:1050790287699611768>'
 shop_cat_emoji = '<:storecat:1050792540158312489>'
 robber_cat_emoji = '<:angryasfukcatwdagger:1052277664200794142>'
+dog_emoji = ':dog:'
+dog2_emoji = ':dog2:'
 
 bot = Bot(command_prefix=CMD_PREFIX, intents=intents, case_insensitive=True)
 
@@ -377,6 +430,9 @@ async def buy_item(ctx: Context, item_id: int):
             user_dabloons = Database.field("SELECT dabloons FROM user WHERE id = {}".format(ctx.author.id))
             item_price = Database.field("SELECT price FROM item WHERE id = {}".format(item_id))
             if user_dabloons >= item_price:
+                tax_cut = Database.tax
+                if user_dabloons > 400:
+                    tax_cut = Database.tax + 4
                 user_dabloons -= item_price
                 # update dabloons after purchase
                 Database.execute("UPDATE user SET dabloons = {} WHERE id = {}".format(user_dabloons, ctx.author.id))                
@@ -388,7 +444,8 @@ async def buy_item(ctx: Context, item_id: int):
                 item_cooldown = datetime.datetime.strptime(Database.field("SELECT cooldown FROM item WHERE id = {}".format(item_id)), '%H:%M:%S')
                 current_time = datetime.datetime.now()
                 item_cooldown = current_time + datetime.timedelta(hours=item_cooldown.hour, minutes=item_cooldown.minute, seconds=item_cooldown.second)
-                Database.execute("UPDATE item SET cooldown = \"{}\", price = price - {} WHERE id = {}".format(str(item_cooldown), Database.tax, item_id))
+
+                Database.execute("UPDATE item SET cooldown = \"{}\", price = price - {} WHERE id = {}".format(str(item_cooldown), tax_cut, item_id))
                 # check if sold out then close shop            
                 shop_items = Database.records("SELECT name, price, id FROM item WHERE id IN (SELECT item_id FROM ownership WHERE user_id = {})".format(SHOP_ID))
                 if not shop_items:
@@ -402,19 +459,24 @@ async def buy_item(ctx: Context, item_id: int):
 @bot.command(name='sell', help='<item_id> sell item with that id')
 async def sell_item(ctx: Context, item_id: int):
     is_owner = Database.record("SELECT * FROM ownership WHERE user_id  = {} AND item_id = {}".format(ctx.author.id, item_id))
-    if is_owner:
+    if is_owner:        
         selling_item = Database.record("SELECT name, price, cooldown FROM item WHERE id  = {}".format(item_id))
-        current_time = datetime.datetime.now()
-        item_cooldown = datetime.datetime.strptime(selling_item[2], "%Y-%m-%d %H:%M:%S.%f")
-        if item_cooldown < current_time:
-            # update the dabloons from selling
-            Database.execute("UPDATE user SET dabloons = dabloons + {} WHERE id = {}".format(selling_item[1], ctx.author.id))                
-            # update item ownership to unowned
-            Database.execute("UPDATE ownership SET user_id = {} WHERE item_id = {}".format(UNOWNED_ID, item_id))                
-            
-            await ctx.send("{} sold item **{}** `id[{}]` for **{}** dabloons".format(MentionAuthor(ctx.author), selling_item[0], item_id, selling_item[1]))
+        is_doggo = Database.record("SELECT * FROM ownership WHERE user_id  = {} AND item_id < 0 AND item_id = {}".format(ctx.author.id, item_id))
+        if is_doggo:
+            Database.execute("UPDATE ownership SET user_id = {} WHERE item_id = {}".format(UNOWNED_ID, item_id)) 
+            await ctx.send("{} abandoned {}!!".format(MentionAuthor(ctx.author), selling_item[0]))   
         else:
-            await ctx.send("{} item is on `{}` cooldown cannot be sold!".format(MentionAuthor(ctx.author), FormatTimeToString(item_cooldown-current_time)))
+            current_time = datetime.datetime.now()
+            item_cooldown = datetime.datetime.strptime(selling_item[2], "%Y-%m-%d %H:%M:%S.%f")
+            if item_cooldown < current_time:
+                # update the dabloons from selling
+                Database.execute("UPDATE user SET dabloons = dabloons + {} WHERE id = {}".format(selling_item[1], ctx.author.id))                
+                # update item ownership to unowned
+                Database.execute("UPDATE ownership SET user_id = {} WHERE item_id = {}".format(UNOWNED_ID, item_id))                
+                
+                await ctx.send("{} sold item **{}** `id[{}]` for **{}** dabloons".format(MentionAuthor(ctx.author), selling_item[0], item_id, selling_item[1]))
+            else:
+                await ctx.send("{} item is on `{}` cooldown cannot be sold!".format(MentionAuthor(ctx.author), FormatTimeToString(item_cooldown-current_time)))
     else:
         await ctx.send("{} You do not own that item!".format(MentionAuthor(ctx.author)))
     print(
@@ -456,10 +518,13 @@ async def show_inventory(ctx: Context):
     if not dabloons:
         dabloons = 0
     user_items = Database.records("SELECT name, price, id, cooldown FROM item WHERE id IN (SELECT item_id FROM ownership WHERE user_id = {})".format(ctx.author.id))
-    bag_message = MentionAuthor(ctx.author) + ' you have `{}` dabloons\n'.format(dabloons)
+    bag_message = MentionAuthor(ctx.author) + ' you have `{}` dabloons{}{}\n'.format(dabloons, ShowGoodBoi(ctx), ShowGoodGoil(ctx))
     for item in user_items:
-        item_cooldown = datetime.datetime.strptime(item[3], "%Y-%m-%d %H:%M:%S.%f")
-        bag_message += "    **{}** dabloons : **{}**  `id[{}]`    *{}*\n".format(item[1], item[0], item[2], ("READY" if item_cooldown < current_time else "..."))
+        if item[2] > 0:
+            item_cooldown = datetime.datetime.strptime(item[3], "%Y-%m-%d %H:%M:%S.%f")
+            bag_message += "    **{}** dabloons : **{}**  `id[{}]`    *{}*\n".format(item[1], item[0], item[2], ("READY" if item_cooldown < current_time else "..."))
+        else:
+            bag_message += "    **{}**  `id[{}]`\n".format(item[0], item[2])
     await ctx.send(bag_message)
     print(
         f'{datetime.datetime.now()}:: show_inventory command triggerd {ctx.author}'
@@ -478,6 +543,19 @@ async def show_encounter_cooldown(ctx: Context):
         await ctx.send(MentionAuthor(ctx.author) + ' you have `{}` cooldown on your encounter.'.format(FormatTimeToString(user_encounter_cooldown-currentTime)))
     print(
         f'{datetime.datetime.now()}:: show_encounter_cooldown command triggerd {ctx.author}'
+    )
+
+@bot.command('pet', help='pet your doggo')
+async def pet_doggo(ctx: Context):
+    doggos = ShowGoodBoi(ctx)
+    doggos += ShowGoodGoil(ctx)
+    if doggos:
+        await ctx.send(MentionAuthor(ctx.author) + f' pets{doggos}!')
+    else:
+        await ctx.send(MentionAuthor(ctx.author) + ' has no doggos to pet...')
+
+    print(
+        f'{datetime.datetime.now()}:: pet_doggo command triggerd {ctx.author}'
     )
 
 @bot.event
@@ -509,6 +587,7 @@ async def on_message(message):
             encounter_chance = random.randint(1,2)
             shop_encounter_chance = random.randint(1,5)
             robbery_chance = random.randint(1,10)
+            doggo_chance = random.randint(1,10)
 
             if encounter_chance == 1: 
                 dabloon_amount = random.randint(3,15)
@@ -534,10 +613,13 @@ async def on_message(message):
             elif robbery_chance == 1:
                 ctx = await bot.get_context(message)
                 await Robbery(ctx)
+            elif doggo_chance == 1:
+                ctx = await bot.get_context(message)
+                await FoundDoggo(ctx)
             else:
                 Database.execute("UPDATE user SET encounter_cooldown = \"{}\" WHERE id = {}".format(str(datetime.datetime.now() + encounter_reset_time), message.author.id))
                 print(
-                    f'{datetime.datetime.now()}:: {message.author} encounter failed the roll with {encounter_chance}, {shop_encounter_chance}, {robbery_chance} - put on cooldown'
+                    f'{datetime.datetime.now()}:: {message.author} encounter failed the roll with {encounter_chance}, {shop_encounter_chance}, {robbery_chance}, {doggo_chance} - put on cooldown'
                 )                
         else:
             print(
@@ -568,6 +650,14 @@ async def test_stuff(ctx: Context):
     await Robbery(ctx)
     print(
             f'{datetime.datetime.now()}:: test_stuff command triggered {ctx.author}'
+        )
+
+@bot.command(name='test2', help='')
+@commands.has_role('botadmin')
+async def test2_stuff(ctx: Context):
+    await FoundDoggo(ctx)
+    print(
+            f'{datetime.datetime.now()}:: test2_stuff command triggered {ctx.author}'
         )
 
 @bot.command(name='t_open', help='')
