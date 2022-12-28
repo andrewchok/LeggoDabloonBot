@@ -7,6 +7,7 @@ import datetime
 import discord
 from discord import Message
 from discord.ext import commands
+from discord import app_commands
 from discord.ext.commands import Context, Bot
 from dotenv import load_dotenv
 from getpass import getpass
@@ -28,6 +29,7 @@ intents = discord.Intents(
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
 GUILD = os.getenv('DISCORD_GUILD')
+GUILD_ID = os.getenv('DISCORD_GUILD_ID')
 DEVELOPER = os.getenv('DEV_ID')
 CMD_PREFIX = os.getenv('CMD_PREFIX')
 MYSQL_USERNAME = os.getenv('MYSQL_USERNAME')
@@ -407,8 +409,9 @@ async def on_ready():
         f'[{guild.name}(id: {guild.id})]'        
     )
     start_scheduled()
+    await bot.tree.sync(guild=GUILD_ID)
 
-@bot.command(name='buy', help='<item_id> buys item with that id')
+@bot.hybrid_command(name='buy', help='<item_id> buys item with that id')
 async def buy_item(ctx: Context, item_id: int):
     global shop_cat_emoji
 
@@ -417,6 +420,7 @@ async def buy_item(ctx: Context, item_id: int):
         print(
             f'{datetime.datetime.now()}:: buy_item command triggered {ctx.author} :: Store not open'
         )
+        return
 
     user_recently_bought = Database.record("SELECT 1 FROM recent_shoppers WHERE user_id = {}".format(ctx.author.id))
     if(user_recently_bought):        
@@ -456,7 +460,7 @@ async def buy_item(ctx: Context, item_id: int):
         f'{datetime.datetime.now()}:: buy_item command triggered {ctx.author}'
     )
 
-@bot.command(name='sell', help='<item_id> sell item with that id')
+@bot.hybrid_command(name='sell', help='<item_id> sell item with that id')
 async def sell_item(ctx: Context, item_id: int):
     is_owner = Database.record("SELECT * FROM ownership WHERE user_id  = {} AND item_id = {}".format(ctx.author.id, item_id))
     if is_owner:        
@@ -483,7 +487,7 @@ async def sell_item(ctx: Context, item_id: int):
         f'{datetime.datetime.now()}:: sell_item command triggered {ctx.author}'
     )
 
-@bot.command(name='shop', help='open the shop')
+@bot.hybrid_command(name='shop', help='open the shop')
 async def show_store(ctx: Context):  
     global shop_time
     global shop_cat_emoji
@@ -511,7 +515,7 @@ async def show_store(ctx: Context):
         f'{datetime.datetime.now()}:: show_store command triggerd {ctx.author}'
     )
 
-@bot.command(name='bag', help='see your inventory')
+@bot.hybrid_command(name='bag', help='see your inventory')
 async def show_inventory(ctx: Context):
     current_time = datetime.datetime.now()
     dabloons = Database.field("SELECT dabloons FROM user WHERE id = {}".format(ctx.author.id))
@@ -530,7 +534,7 @@ async def show_inventory(ctx: Context):
         f'{datetime.datetime.now()}:: show_inventory command triggerd {ctx.author}'
     )
 
-@bot.command('cd', help='check your encounter cooldown')
+@bot.hybrid_command('cd', help='check your encounter cooldown')
 async def show_encounter_cooldown(ctx: Context):    
     currentTime = datetime.datetime.now()
     user_encounter_cooldown = datetime.datetime.strptime(
@@ -545,7 +549,7 @@ async def show_encounter_cooldown(ctx: Context):
         f'{datetime.datetime.now()}:: show_encounter_cooldown command triggerd {ctx.author}'
     )
 
-@bot.command('pet', help='pet your doggo')
+@bot.hybrid_command('pet', help='pet your doggo')
 async def pet_doggo(ctx: Context):
     doggos = ShowGoodBoi(ctx)
     doggos += ShowGoodGoil(ctx)
@@ -603,8 +607,8 @@ async def on_message(message):
                 Database.create_store()
                 global shop_cat_emoji
                 await message.channel.send('''
-                    {}: Salutations Traveler {}!\n{}: Shop is now open! `use !shop`
-                    '''.format(shop_cat_emoji, MentionAuthor(message.author), shop_cat_emoji)
+                    {}: Salutations Traveler {}!\n{}: Shop is now open! `use {}shop or /shop`
+                    '''.format(shop_cat_emoji, MentionAuthor(message.author), shop_cat_emoji, CMD_PREFIX)
                     )
                 Database.execute("UPDATE user SET encounter_cooldown = \"{}\" WHERE id = {}".format(str(datetime.datetime.now() + encounter_reset_time), message.author.id))
                 print(
@@ -644,15 +648,15 @@ async def on_message(message):
             )
     
 #%% Test Area
-@bot.command(name='test', help='')
+@bot.hybrid_command(name='test', help='')
 @commands.has_role('botadmin')
 async def test_stuff(ctx: Context):
-    await Robbery(ctx)
+    await show_encounter_cooldown(ctx)
     print(
             f'{datetime.datetime.now()}:: test_stuff command triggered {ctx.author}'
         )
 
-@bot.command(name='test2', help='')
+@bot.hybrid_command(name='test2', help='')
 @commands.has_role('botadmin')
 async def test2_stuff(ctx: Context):
     await FoundDoggo(ctx)
@@ -660,7 +664,7 @@ async def test2_stuff(ctx: Context):
             f'{datetime.datetime.now()}:: test2_stuff command triggered {ctx.author}'
         )
 
-@bot.command(name='t_open', help='')
+@bot.hybrid_command(name='t_open', help='')
 @commands.has_role('botadmin')
 async def test_open_store(ctx: Context):
     Database.create_store()
@@ -668,7 +672,7 @@ async def test_open_store(ctx: Context):
             f'{datetime.datetime.now()}:: test_open_store command triggered {ctx.author}'
         )
 
-@bot.command(name='t_close', help='')
+@bot.hybrid_command(name='t_close', help='')
 @commands.has_role('botadmin')
 async def test_close_store(ctx: Context):
     CloseShop()
@@ -676,7 +680,7 @@ async def test_close_store(ctx: Context):
             f'{datetime.datetime.now()}:: test_close_store command triggered {ctx.author}'
         )
 
-@bot.command(name='t_delete_pending', help='')
+@bot.hybrid_command(name='t_delete_pending', help='')
 @commands.has_role('botadmin')
 async def test_delete_pending_items(ctx: Context):
     Database.execute("DELETE FROM item WHERE id IN (SELECT item_id FROM ownership WHERE user_id = {})".format(TO_DELETE_ID)) 
@@ -684,7 +688,7 @@ async def test_delete_pending_items(ctx: Context):
             f'{datetime.datetime.now()}:: test_delete_pending_items command triggered {ctx.author}'
         )  
 
-@bot.command(name='t_delete_unowned', help='')
+@bot.hybrid_command(name='t_delete_unowned', help='')
 @commands.has_role('botadmin')
 async def test_delete_unowned_items(ctx: Context):
     Database.execute("DELETE FROM item WHERE id IN (SELECT item_id FROM ownership WHERE user_id = {})".format(UNOWNED_ID)) 
